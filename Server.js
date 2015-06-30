@@ -24,7 +24,7 @@ function Queue(i){ //circular queue of integers of size i
 	}
 	this.dequeue=function(data) {
 		if (front==-1) { //queue is empty
-			;
+			return null;
 		}
 		else if (front==back) { //queue has 1 element
 			temp=a[front];
@@ -43,6 +43,14 @@ function Queue(i){ //circular queue of integers of size i
 			return temp;
 		}
 	}
+	this.empty=function() {
+		if (front==-1) {
+			return true;
+		}
+		else {
+			return false;
+		}
+	}
 };
 var connections = new Object();
 //read all config data from file
@@ -53,24 +61,24 @@ for (i=0;i!=config["Max_Games"];++i) {
 }
 var game_table=new Object();
 var play_game_map=new Object();
-Object.length = function(obj) {
+/*Object.length = function(obj) {
     var size = 0;
 	var key;
     for (key in obj) {
         if (obj.hasOwnProperty(key)) size++;
     }
     return size;
-};
+};*/
 function game_inserter_output(i) {
-	return function(data) {
+	return function(data) { //sends data from game i to the player who is first part of string(no spaces)
 		var split_data=data.split(" ")
 		connections[split_data[0]].write(i.toString()+" "+split_data.slice(1,split_data.length).join(" "));
 	}
 }
 function game_deleter(i) {
 	return function(exitcode) {
-		delete game_table[i]; //removes game from the table
-		for (key in play_game_map) {
+		delete game_table[i.toString()]; //removes game from the table
+		for (key in play_game_map) { //removes game from all players who were in the game
 			var checker=play_game_map[key].indexOf(i)
 			if (checker!=-1)
 				play_game_map[key].splice(checker,1);
@@ -88,17 +96,17 @@ server=net.createServer(function (socket) {
   socket.on('data', function (data) {
 	var local=data.toString().split(" ");
 	if (local[0]=="0") { //game create command
-		if (game_table.length==config["Max_Games"]||config["Max_Games_per_Player"]<=play_game_map[socket.name]) { //maximum number of games has already been created
+		if (game_ids.empty()||config["Max_Games_per_Player"]==play_game_map[socket.name].length) { //maximum number of games has already been created
 			socket.write("REJECTED");
 		}
 		else {
-			var args=local.slice(1,local.length);
+			var args=local.slice(1,local.length); //command line args(usually clauses, and the host player's state) for the game
 			var idx=game_ids.dequeue();
-			game_table.push(spawn(config["Game_Command"],args,
+			play_game_map[socket.name].push(idx);
+			game_table[idx]=spawn(config["Game_Command"],args,
 			{
 				stdio : ['pipe','pipe','pipe']
-			})); //add entry to the game table
-			var proc_handle=game_table[game_table.length-1];
+			}); //add entry to the game table
 			socket.write("ACCEPTED");
 			game_table[idx].on('exit',game_deleter(idx));
 			game_table[idx].stdout.on('data',game_inserter_output(idx));
@@ -107,11 +115,20 @@ server=net.createServer(function (socket) {
 	}
 	else if (local[0]=="1") { //game join command
 		var game_id=parseInt(local[1])
-		game_table[game_id].write(socket.name+" "+local.slice(2,local.length).join(" "));
-		play_game_map[socket.name].push(game_id)
+		if (game_id in game_table && play_game_map[socket.name].length<config["Max_Games_per_Player"]&&play_game_map[socket.name].indexOf(game_id)==-1) {
+			//if the game actually exists, the player hasn't exceeded quota, and the player isn't already in the game
+			game_table[game_id].write(socket.name+" "+local.slice(2,local.length).join(" "));
+			play_game_map[socket.name].push(game_id)
+		}
+		else {
+			socket.write("REJECTED");
+		}
 	}
 	else if (local[0]=="2") { //game transmit command
-		game_table[parseInt(local[1])].write(socket.name+" "+local.slice(2,local.length).join(" "));
+		var game_id=parseInt(local[1])
+		if (game_id in game_table && play_game_map[socket.name].indexOf(game_id)!=-1) { //if the game actually exists, and the player is part of it
+			game_table[game_id].write(socket.name+" "+local.slice(2,local.length).join(" "));
+		}
 	}
   });
  
